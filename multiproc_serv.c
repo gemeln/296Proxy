@@ -1,7 +1,5 @@
-/*
-** server.c -- a stream socket server demo
-*/
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -20,6 +18,13 @@
 #define MAXDATASIZE 100
 #define BACKLOG 10	 // how many pending connections queue will hold
 
+typedef struct _payload {
+    int sockfd;
+    int new_fd;
+
+
+} payload;
+
 void sigchld_handler(int s)
 {
 	(void)s; // quiet unused variable warning
@@ -36,15 +41,103 @@ void sigchld_handler(int s)
 // get sockaddr, IPv4 or IPv6:
 void *get_in_addr(struct sockaddr *sa)
 {
-	if (sa->sa_family == AF_INET) {
+	if (sa->sa_family == AF_INET)
 		return &(((struct sockaddr_in*)sa)->sin_addr);
-	}
+
 
 	return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-int main(void)
-{
+//TODO ADD PAYLOAD STRUCT TO SET UP CONNECTION, can do tomorrow like 130-3
+void* connection_thread(void* ptr) {
+    payload* load = (payload*) ptr;
+    int sockfd = load->sockfd;
+    int new_fd = load->new_fd;
+    //close(sockfd); // child doesn't need the listener
+    if (send(new_fd, "Hello, world!", 13, 0) == -1)
+    	perror("send");
+    char buf[MAXDATASIZE];
+
+    int sockfd2, numbytes;
+    if ((numbytes = recv(new_fd, buf, MAXDATASIZE-1, 0)) == -1) {
+        perror("recv");
+        exit(1);
+    }
+
+    buf[numbytes] = '\0';
+
+    printf("server: received '%s'\n",buf);
+
+
+    //Open new connection and act as a client. Get connection and send() back to original client
+
+    struct addrinfo hints2, *servinfo2, *p2;
+    memset(&hints2, 0, sizeof(hints2));
+    hints2.ai_family = AF_INET;
+    hints2.ai_socktype = SOCK_STREAM;
+
+    int rv2 = getaddrinfo(buf, PORT2, &hints2, &servinfo2);
+
+    for (p2 = servinfo2; p2 != NULL; p2 = p2->ai_next) {
+        if ((sockfd2 = socket(p2->ai_family, p2->ai_socktype, p2->ai_protocol)) == -1) {
+            perror("client: socket");
+            continue;
+        }
+
+        if (connect(sockfd2, p2->ai_addr, p2->ai_addrlen) == -1) {
+            perror("client: connect");
+            close(sockfd2);
+            continue;
+        }
+
+        break;
+    }
+
+    if (p2 == NULL) {
+        fprintf(stderr, "client: failed to connect :(\n");
+        //return 2;
+        pthread_exit(NULL);
+    }
+
+    char s[INET6_ADDRSTRLEN];
+    inet_ntop(p2->ai_family, get_in_addr((struct sockaddr *)p2->ai_addr),
+            s, sizeof s);
+    printf("client: connecting to %s\n", s);
+
+    freeaddrinfo(servinfo2); // all done with this structure
+
+    char *buffer;
+    asprintf(&buffer, "GET %s HTTP/1.0\r\n"
+                    "Connection: close\r\n"
+                    "Accept: */*\r\n\r\n",
+                    buf);
+    //if (send(sockfd2, "Hello, world!", 13, 0) == -1)
+        //perror("send");
+    write(sockfd2, buffer, strlen(buffer));
+    free(buffer);
+
+    char buf2[MAXDATASIZE];
+    int numbytes2 = recv(sockfd2, buf2, MAXDATASIZE-1, 0);
+
+    if (numbytes2 == -1) {
+        perror("recv");
+        exit(1);
+    }
+
+    buf2[numbytes2] = '\0';
+    printf("client: received '%s'\n",buf2);
+    if (send(sockfd, buf2, strlen(buf2), 0) == -1)
+        perror("send");
+
+
+
+    close(new_fd);
+    pthread_exit(NULL);
+
+
+}
+
+int main(void) {
 	int sockfd, new_fd, numbytes;  // listen on sock_fd, new connection on new_fd
 	struct addrinfo hints, *servinfo, *p;
 	struct sockaddr_storage their_addr; // connector's address information
@@ -56,7 +149,7 @@ int main(void)
 	int rv;
 
 	memset(&hints, 0, sizeof hints);
-	hints.ai_family = AF_UNSPEC;
+	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_PASSIVE; // use my IP
 
@@ -115,7 +208,7 @@ int main(void)
 		new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
 		if (new_fd == -1) {
 			perror("accept");
-			continue;
+			break;
 		}
 
 		inet_ntop(their_addr.ss_family,
@@ -123,84 +216,17 @@ int main(void)
 			s, sizeof s);
 		printf("server: got connection from %s\n", s);
 
-		if (!fork()) { // this is the child process
-			close(sockfd); // child doesn't need the listener
-			//if (send(new_fd, "Hello, world!", 13, 0) == -1)
-			//	perror("send");
-            if ((numbytes = recv(new_fd, buf, MAXDATASIZE-1, 0)) == -1) {
-                perror("recv");
-                exit(1);
-            }
+        pthread_t tid;
+        payload* load = malloc(sizeof(payload));
+        load->sockfd = sockfd;
+        load->new_fd = new_fd;
+        pthread_create(&tid, NULL, connection_thread, load);
 
-            buf[numbytes] = '\0';
+        void* res;
+        pthread_join(tid, &res);
+        free(load);
+        load = NULL;
 
-            printf("server: received '%s'\n",buf);
-
-
-            //Open new connection and act as a client. Get connection and send() back to original client
-
-            struct addrinfo hints2, *servinfo2, *p2;
-            int sockfd2, numbytes;
-            memset(&hints2, 0, sizeof(hints2));
-            hints2.ai_family = AF_UNSPEC;
-            hints.ai_socktype = SOCK_STREAM;
-
-            int rv2 = getaddrinfo(buf, PORT2, &hints2, &servinfo2);
-
-            for (p2 = servinfo2; p2 != NULL; p2 = p2->ai_next) {
-                if ((sockfd2 = socket(p2->ai_family, p2->ai_socktype, p2->ai_protocol)) == -1) {
-                    perror("client: socket");
-                    continue;
-                }
-
-                if (connect(sockfd2, p2->ai_addr, p2->ai_addrlen) == -1) {
-                    perror("client: connect");
-                    close(sockfd2);
-                    continue;
-                }
-
-                break;
-            }
-
-            if (p2 == NULL) {
-                fprintf(stderr, "client: failed to connect :(\n");
-                return 2;
-            }
-
-            char s[INET6_ADDRSTRLEN];
-            inet_ntop(p2->ai_family, get_in_addr((struct sockaddr *)p2->ai_addr),
-                    s, sizeof s);
-            printf("client: connecting to %s\n", s);
-
-            freeaddrinfo(servinfo2); // all done with this structure
-
-            char *buffer;
-            asprintf(&buffer, "GET %s HTTP/1.0\r\n"
-                            "Connection: close\r\n" 
-                            "Accept: */*\r\n\r\n", 
-                            buf);
-            //if (send(sockfd2, "Hello, world!", 13, 0) == -1)
-                //perror("send");
-            write(sockfd2, buffer, strlen(buffer));
-            free(buffer);
-            
-            int numbytes2 = recv(sockfd2, buf, MAXDATASIZE-1, 0);
-
-            if (numbytes2 == -1) {
-                perror("recv");
-                exit(1);
-            }
-
-            buf[numbytes] = '\0';
-            printf("client: received '%s'\n",buf);
-            if (send(sockfd, buf, sizeof(buf), 0) == -1)
-                perror("send");
-
-
-
-			close(new_fd);
-			exit(0);
-		}
 		close(new_fd);  // parent doesn't need this
 	}
 
