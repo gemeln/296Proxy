@@ -41,5 +41,7 @@ int main(int argc, int **argv)
     printf("Read %d chars\n", len);
     printf("===\n");
     printf("%s\n", buffer);
+    write(client_fd,"ABC",3);
+    close(client_fd);
     return 0;
 }

@@ -8,8 +8,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
-
-char* sendReq(char *req)
+#include <ctype.h>
+char *sendReq(char *req)
 {
     if (req == NULL)
     {
@@ -22,6 +22,23 @@ char* sendReq(char *req)
         fread(req, 1, numbytes, testReq);
         assert(numbytes > 0);
     }
+    // Find host from request
+    char *hostBegin = strstr(req, "Host: ") + strlen("Host: ");
+    size_t hostlen = 0;
+    while (1)
+    {
+        if (hostBegin[hostlen] == ':')
+            break;
+        if (isspace(hostBegin[hostlen]))
+            break;
+        hostlen++;
+    }
+    char hostname[1024];
+    hostname[hostlen] = 0;
+    strncpy(hostname, hostBegin, hostlen);
+    printf("Parsed hostname: %s\\\n", hostname);
+    //
+
     struct hostent *server;
     struct sockaddr_in serv_addr;
     int sockfd, bytes, sent, received, total;
@@ -30,7 +47,7 @@ char* sendReq(char *req)
     if (sockfd < 0)
         perror("ERROR opening socket");
 
-    server = gethostbyname("yahoo.com");
+    server = gethostbyname(hostname);
     if (server == NULL)
         perror("ERROR, no such host");
 
@@ -69,7 +86,6 @@ char* sendReq(char *req)
 
     if (received == total)
         perror("ERROR storing complete response from socket");
-    puts(response);
     /* close the socket */
     close(sockfd);
     return strdup(response);
@@ -77,7 +93,8 @@ char* sendReq(char *req)
 
 int main(int argc, int **argv)
 {
-    // sendReq();
+    // sendReq(NULL);
+    // return 0;
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_INET;
@@ -102,20 +119,23 @@ int main(int argc, int **argv)
         perror("listen()");
         exit(1);
     }
-    puts("Waiting to accept");
-    int client_fd = accept(sock_fd, NULL, NULL);
-    puts("Accepted");
-    char buffer[1000];
-    // READING
-    int len = read(client_fd, buffer, sizeof(buffer) - 1);
-    buffer[len] = '\0';
+    while (1)
+    {
+        puts("Waiting to accept");
+        int client_fd = accept(sock_fd, NULL, NULL);
+        puts("Accepted");
+        char buffer[1000];
+        // READING
+        int len = read(client_fd, buffer, sizeof(buffer) - 1);
+        buffer[len] = '\0';
 
-    printf("Read %d chars\n", len);
-    printf("===\n");
-    printf("%s\n", buffer);
-    char* res = sendReq(buffer);
-    write(client_fd, res, strlen(res));
-    close(client_fd);
+        printf("Read %d chars\n", len);
+        printf("===Received request===\n");
+        printf("%s\n", buffer);
+        char *res = sendReq(NULL);
+        write(client_fd, res, strlen(res));
+        close(client_fd);
+    }
     close(sock_fd);
     return 0;
 }
