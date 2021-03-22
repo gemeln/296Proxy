@@ -17,6 +17,7 @@
 #define PORT2 "443"
 #define MAXDATASIZE 100
 #define BACKLOG 10	 // how many pending connections queue will hold
+#define MAX_THREADS 20
 
 typedef struct _payload {
     int sockfd;
@@ -48,7 +49,6 @@ void *get_in_addr(struct sockaddr *sa)
 	return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-//TODO ADD PAYLOAD STRUCT TO SET UP CONNECTION, can do tomorrow like 130-3
 void* connection_thread(void* ptr) {
     payload* load = (payload*) ptr;
     int sockfd = load->sockfd;
@@ -126,10 +126,11 @@ void* connection_thread(void* ptr) {
 
     buf2[numbytes2] = '\0';
     printf("client: received '%s'\n",buf2);
-    if (send(sockfd, buf2, strlen(buf2), 0) == -1)
+    if (send(new_fd, buf2, strlen(buf2), 0) == -1)
         perror("send");
 
 
+    pthread_detach(pthread_self());
 
     close(new_fd);
     pthread_exit(NULL);
@@ -202,8 +203,10 @@ int main(void) {
 	}
 
 	printf("server: waiting for connections...\n");
+    pthread_t tid_arr[MAX_THREADS];
+    int thread_num = 0;
 
-	while(1) {  // main accept() loop
+	while(thread_num < MAX_THREADS) {  // main accept() loop
 		sin_size = sizeof their_addr;
 		new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
 		if (new_fd == -1) {
@@ -220,14 +223,10 @@ int main(void) {
         payload* load = malloc(sizeof(payload));
         load->sockfd = sockfd;
         load->new_fd = new_fd;
-        pthread_create(&tid, NULL, connection_thread, load);
+        pthread_create(&tid_arr[thread_num], NULL, connection_thread, load);
+        thread_num++;
 
-        void* res;
-        pthread_join(tid, &res);
-        free(load);
-        load = NULL;
 
-		close(new_fd);  // parent doesn't need this
 	}
 
 	return 0;
