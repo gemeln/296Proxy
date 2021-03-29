@@ -22,6 +22,30 @@ char *sendReq(char *req)
         fread(req, 1, numbytes, testReq);
         assert(numbytes > 0);
     }
+    // Delete port from request
+    // char *portHeader = strstr(req, ":");
+    // if (portHeader)
+    // {
+    //     char *next = strstr(portHeader, "\n");
+    //     memmove(portHeader, next, 1 + strlen(next));
+    // }
+    // Delete HTTP/1.1 from request
+    char *HTTPheader = strstr(req, " HTTP/");
+    if (HTTPheader)
+    {
+        char *next = strstr(HTTPheader, "\n");
+        memmove(HTTPheader, next, 1 + strlen(next));
+    }
+    // Replace connect with get
+    char *CONNECTheader = strstr(req, "CONNECT");
+    if (CONNECTheader)
+    {
+        char *next = CONNECTheader + strlen("CONNECT");
+        memmove(CONNECTheader + 3, next, 1 + strlen(next));
+        memcpy(CONNECTheader, "GET", 3);
+    }
+    puts(req);
+    puts("END");
     // Find host from request
     char *hostBegin = strstr(req, "Host: ") + strlen("Host: ");
     size_t hostlen = 0;
@@ -88,6 +112,7 @@ char *sendReq(char *req)
         perror("ERROR storing complete response from socket");
     /* close the socket */
     close(sockfd);
+    puts("server response received");
     return strdup(response);
 }
 
@@ -135,6 +160,7 @@ int main(int argc, int **argv)
         char *res = sendReq(NULL);
         write(client_fd, res, strlen(res));
         close(client_fd);
+        free(res);
     }
     close(sock_fd);
     return 0;

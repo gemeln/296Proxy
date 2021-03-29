@@ -1,9 +1,5 @@
 GET /
-Host: google.com
-User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:86.0) Gecko/20100101 Firefox/86.0
-Accept: image/webp,*/*
-Accept-Language: en-US,en;q=0.5
-Accept-Encoding: gzip, deflate
+User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:87.0) Gecko/20100101 Firefox/87.0
+Proxy-Connection: keep-alive
 Connection: keep-alive
-Referer: http://google.com/
-Cache-Control: max-age=0
+Host: www.google.com
