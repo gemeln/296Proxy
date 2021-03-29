@@ -68,6 +68,26 @@ void* connection_thread(void* ptr) {
 
     printf("server: received '%s'\n",buf);
 
+    FILE* block_file = fopen("blocked_list.txt", "r");
+
+    char* block_line = NULL;
+    size_t link_len = 0;
+    ssize_t read;
+    if (block_file != NULL) {
+        while ((read = getline(&block_line, &link_len, block_file)) != -1) {
+            block_line[strlen(block_line)-1] = '\0';
+            if (strcmp(buf, block_line) == 0) {
+                printf("Website blocked\n");
+            if (send(new_fd, "Website blocked\n", 13, 0) == -1)
+                perror("send");
+                pthread_exit(NULL);
+            }
+
+        }
+
+    }
+
+
 
     //Open new connection and act as a client. Get connection and send() back to original client
 
