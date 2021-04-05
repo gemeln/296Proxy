@@ -1,124 +1,109 @@
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <stddef.h>
+#include <assert.h>
+#include <string.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-
-int create_socket(int port)
+#include <stdlib.h>
+#include <ctype.h>
+int main(int argc, int **argv)
 {
-    int s;
-    struct sockaddr_in addr;
+    // sendReq(NULL);
+    // return 0;
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
 
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0) {
-	perror("Unable to create socket");
-	exit(EXIT_FAILURE);
+    int s = getaddrinfo(NULL, "1358", &hints, &result);
+    assert(s == 0);
+    int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int enable = 1;
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
+        perror("setsockopt(SO_REUSEADDR) failed");
+    // Bind and listen
+    if (bind(sock_fd, result->ai_addr, result->ai_addrlen) != 0)
+    {
+        perror("bind()");
+        exit(1);
     }
 
-    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-	perror("Unable to bind");
-	exit(EXIT_FAILURE);
+    if (listen(sock_fd, 10) != 0)
+    {
+        perror("listen()");
+        exit(1);
     }
+    puts("Waiting to accept");
+    int client_fd = accept(sock_fd, NULL, NULL);
+    puts("Accepted");
+    char buffer[1024 * 1024];
+    // READING
+    int len = read(client_fd, buffer, sizeof(buffer) - 1);
+    buffer[len] = '\0';
 
-    if (listen(s, 1) < 0) {
-	perror("Unable to listen");
-	exit(EXIT_FAILURE);
+    printf("Read %d chars\n", len);
+    printf("===Received request===\n");
+    printf("%s\n", buffer);
+    // Get hostname
+    char hostName[512];
+    char *hostBegin = strstr(buffer, "Host: ") + strlen("Host: ");
+    int hostLen = strstr(hostBegin, "\r\n") - hostBegin;
+    hostName[hostLen] = '\0';
+    strncpy(hostName, hostBegin, hostLen);
+    printf("%s|\n", hostName);
+    // Get openssl command
+    int toSSL[2];
+    pipe(toSSL);
+    int fromSSL[2];
+    pipe(fromSSL);
+    fflush(stdout);
+    if (fork() == 0)
+    {
+        close(client_fd);
+        close(sock_fd);
+        dup2(fromSSL[1], fileno(stdout));
+        dup2(toSSL[0], fileno(stdin));
+        close(fromSSL[1]);
+        close(fromSSL[0]);
+        close(toSSL[0]);
+        close(toSSL[1]);
+        char openSSL[1024];
+        sprintf(openSSL, "openssl s_client -connect %s\n", hostName);
+        puts(openSSL);
+        system("openssl s_client -connect www.google.com:443");
+        exit(1);
     }
-
-    return s;
-}
-
-void init_openssl()
-{ 
-    SSL_load_error_strings();	
-    OpenSSL_add_ssl_algorithms();
-}
-
-void cleanup_openssl()
-{
-    EVP_cleanup();
-}
-
-SSL_CTX *create_context()
-{
-    const SSL_METHOD *method;
-    SSL_CTX *ctx;
-
-    method = SSLv23_server_method();
-
-    ctx = SSL_CTX_new(method);
-    if (!ctx) {
-	perror("Unable to create SSL context");
-	ERR_print_errors_fp(stderr);
-	exit(EXIT_FAILURE);
-    }
-
-    return ctx;
-}
-
-void configure_context(SSL_CTX *ctx)
-{
-    SSL_CTX_set_ecdh_auto(ctx, 1);
-
-    /* Set the key and cert */
-    if (SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0) {
-        ERR_print_errors_fp(stderr);
-	exit(EXIT_FAILURE);
-    }
-
-    if (SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM) <= 0 ) {
-        ERR_print_errors_fp(stderr);
-	exit(EXIT_FAILURE);
-    }
-}
-
-int main(int argc, char **argv)
-{
-    int sock;
-    SSL_CTX *ctx;
-
-    init_openssl();
-    ctx = create_context();
-
-    configure_context(ctx);
-
-    sock = create_socket(4433);
-
-    /* Handle connections */
-    while(1) {
-        struct sockaddr_in addr;
-        uint len = sizeof(addr);
-        SSL *ssl;
-        const char reply[] = "test\n";
-
-        int client = accept(sock, (struct sockaddr*)&addr, &len);
-        if (client < 0) {
-            perror("Unable to accept");
-            exit(EXIT_FAILURE);
+    int total = 1024 * 1024;
+    while (1)
+    {
+        int bytes = read(fromSSL[0], buffer, total);
+        if (strstr(buffer, "Verify return code: 0 (ok)"))
+        {
+            break;
         }
-
-        ssl = SSL_new(ctx);
-        SSL_set_fd(ssl, client);
-
-        if (SSL_accept(ssl) <= 0) {
-            ERR_print_errors_fp(stderr);
-        }
-        else {
-            SSL_write(ssl, reply, strlen(reply));
-        }
-
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
-        close(client);
     }
-
-    close(sock);
-    SSL_CTX_free(ctx);
-    cleanup_openssl();
+    char *success = "HTTP/1.0 200 Connection Established\r\n\r\n";
+    write(client_fd, success, strlen(success));
+    while (1)
+    {
+        int bytes = read(client_fd, buffer, 1024 * 1023);
+        fprintf(stderr, "read %d bytes from firefox\n", bytes);
+        strcpy(buffer, "GET /\r\n\r\n");
+        write(toSSL[1], buffer, bytes);
+        while (1)
+        {
+            int bytes = read(fromSSL[0], buffer, 1024 * 1023);
+            fprintf(stderr, "read %d bytes from pipe\n", bytes);
+            write(client_fd, buffer, bytes);
+            puts(buffer);
+        }
+    }
+    puts("DONE");
+    close(client_fd);
+    close(sock_fd);
+    return 0;
 }
