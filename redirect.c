@@ -9,44 +9,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <ctype.h>
-char *sendReq(char *req)
+int parseReq(char *req)
 {
-    if (req == NULL)
-    {
-        //Read in test request
-        FILE *testReq = fopen("./test_request.txt", "r");
-        fseek(testReq, 0L, SEEK_END);
-        long numbytes = ftell(testReq);
-        req = malloc(numbytes);
-        fseek(testReq, 0L, SEEK_SET);
-        fread(req, 1, numbytes, testReq);
-        assert(numbytes > 0);
-    }
-    // Delete port from request
-    // char *portHeader = strstr(req, ":");
-    // if (portHeader)
-    // {
-    //     char *next = strstr(portHeader, "\n");
-    //     memmove(portHeader, next, 1 + strlen(next));
-    // }
-    // Delete HTTP/1.1 from request
-    char *HTTPheader = strstr(req, " HTTP/");
-    if (HTTPheader)
-    {
-        char *next = strstr(HTTPheader, "\n");
-        memmove(HTTPheader, next, 1 + strlen(next));
-    }
-    // Replace connect with get
-    char *CONNECTheader = strstr(req, "CONNECT");
-    if (CONNECTheader)
-    {
-        char *next = CONNECTheader + strlen("CONNECT");
-        memmove(CONNECTheader + 3, next, 1 + strlen(next));
-        memcpy(CONNECTheader, "GET", 3);
-    }
-    puts(req);
-    puts("END");
-    // Find host from request
     char *hostBegin = strstr(req, "Host: ") + strlen("Host: ");
     size_t hostlen = 0;
     while (1)
@@ -60,12 +24,12 @@ char *sendReq(char *req)
     char hostname[1024];
     hostname[hostlen] = 0;
     strncpy(hostname, hostBegin, hostlen);
+    hostname[hostlen] = '\0';
     printf("Parsed hostname: %s\\\n", hostname);
-    //
 
     struct hostent *server;
     struct sockaddr_in serv_addr;
-    int sockfd, bytes, sent, received, total;
+    int sockfd;
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0)
@@ -83,11 +47,23 @@ char *sendReq(char *req)
     if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
         perror("ERROR connecting");
 
-    total = strlen(req);
+    return sockfd;
+}
+typedef struct response_t_
+{
+    int datasize;
+    void *data;
+} response_t;
+
+response_t *sendReq(int sockfd, char *req, size_t reqlen)
+{
+    int bytes, sent, received, total;
+    total = reqlen;
     sent = 0;
     do
     {
         bytes = write(sockfd, req + sent, total - sent);
+        printf("WROTE %d\n", bytes);
         if (bytes < 0)
             perror("ERROR writing message to socket");
         if (bytes == 0)
@@ -110,10 +86,12 @@ char *sendReq(char *req)
 
     if (received == total)
         perror("ERROR storing complete response from socket");
-    /* close the socket */
-    close(sockfd);
-    puts("server response received");
-    return strdup(response);
+    printf("read %d form server\n", received);
+    response_t *ret = malloc(sizeof(response_t));
+    ret->data = malloc(received);
+    ret->datasize = received;
+    memcpy(ret->data, response, received);
+    return ret;
 }
 
 int main(int argc, int **argv)
@@ -149,7 +127,7 @@ int main(int argc, int **argv)
         puts("Waiting to accept");
         int client_fd = accept(sock_fd, NULL, NULL);
         puts("Accepted");
-        char buffer[1000];
+        char buffer[2048];
         // READING
         int len = read(client_fd, buffer, sizeof(buffer) - 1);
         buffer[len] = '\0';
@@ -157,8 +135,20 @@ int main(int argc, int **argv)
         printf("Read %d chars\n", len);
         printf("===Received request===\n");
         printf("%s\n", buffer);
-        char *res = sendReq(NULL);
-        write(client_fd, res, strlen(res));
+        int target_fd = parseReq(buffer);
+        strcpy(buffer,"GET google.com \r\nHost: google.com\r\n\r\n");
+        response_t *res = sendReq(target_fd, buffer, strlen(buffer));
+        puts(res->data);
+        dprintf(client_fd, "HTTP/1.0 200 Connection established");
+        return 0;
+        do
+        {
+            len = read(client_fd, buffer, sizeof(buffer) - 1);
+            buffer[len] = '\0';
+            printf("===Received request 2==%d chars\n", len);
+            response_t *res = sendReq(target_fd, buffer, len);
+            write(client_fd, res->data, res->datasize);
+        } while (len > 0);
         close(client_fd);
         free(res);
     }
