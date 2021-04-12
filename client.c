@@ -18,15 +18,17 @@ int main(int arc, char **argv)
 
     getaddrinfo("127.0.0.1", "1358", &current, &result);
     int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
-    connect(sock_fd, result->ai_addr, result->ai_addrlen);
-
-    write(sock_fd, "BARBAR", 6); 
-    char buffer[1000];
-    int len = read(sock_fd, buffer, sizeof(buffer) - 1);
-    buffer[len] = '\0';
-
-    printf("Read %d chars\n", len);
-    printf("===\n");
-    printf("%s\n", buffer);
+    if (connect(sock_fd, result->ai_addr, result->ai_addrlen) != 0)
+    {
+        puts("failed");
+        exit(1);
+    }
+    puts("Connected to server");
+    char *res = argv[1];
+    puts(res);
+    write(sock_fd, res, strlen(res));
+    char buffer[1024*1024];
+    read(sock_fd,buffer,1024*1024-1);
+    puts(buffer);
     close(sock_fd);
 }

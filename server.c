@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netdb.h>
@@ -11,9 +12,9 @@
 #include <ctype.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-char *makeReq(int client_fd, int sock_fd)
+int makeReq(char *writeback, char *clientHeader, int client_fd, int sock_fd)
 {
-    char buffer[1024*1024];
+    char buffer[1024 * 1024];
     int toSSL[2];
     pipe(toSSL);
     int fromSSL[2];
@@ -22,15 +23,23 @@ char *makeReq(int client_fd, int sock_fd)
     pid_t child = fork();
     if (child == 0)
     {
-        close(client_fd);
-        close(sock_fd);
+        // close(client_fd);
+        // close(sock_fd);
         dup2(fromSSL[1], fileno(stdout));
         dup2(toSSL[0], fileno(stdin));
         close(fromSSL[1]);
         close(fromSSL[0]);
         close(toSSL[0]);
         close(toSSL[1]);
-        system("openssl s_client -connect www.google.com:443");
+        // Search for host name
+        char *host = strstr(clientHeader, "Host: ") + strlen("Host: ");
+        char *hostEnd = strstr(host, "\r\n");
+        int length = hostEnd - host;
+        memcpy(buffer, host, length);
+        buffer[length] = 0;
+        char command[1024];
+        sprintf(command, "openssl s_client -connect %s", buffer);
+        system(command);
         exit(1);
     }
     int total = 1024 * 1024;
@@ -44,9 +53,14 @@ char *makeReq(int client_fd, int sock_fd)
         }
     }
     // SSL OK
-
+    // Get Request from http rheader
+    char req[1024];
+    char *reqEnd = strstr(clientHeader, "\r\n");
+    int length = reqEnd - clientHeader+2;
+    memcpy(req, clientHeader, length);
+    req[length] = 0;
+    puts(req);
     numRead = 0;
-    char *req = "GET /\r\n\r\n";
     write(toSSL[1], req, strlen(req));
     char *res_start;
     char *res_end;
@@ -69,17 +83,18 @@ char *makeReq(int client_fd, int sock_fd)
     }
     res_start = strstr(res_start, "\r\n\r\n") + 4;
     assert(res_start);
-    puts("\n\n\n\nDONE\n");
+    // puts("\n\n\n\nDONE\n");
     *res_end = 0;
-
-    puts(res_end - 30);
+    length = res_end - res_start;
+    memcpy(writeback, res_start, length);
+    // puts(res_end - 30);
     waitpid(child, NULL, 0);
-    puts("ENDED");
+    // puts("ENDED");
     close(fromSSL[1]);
     close(fromSSL[0]);
     close(toSSL[0]);
     close(toSSL[1]);
-    return NULL;
+    return length;
 }
 int main(int argc, int **argv)
 {
@@ -116,12 +131,11 @@ int main(int argc, int **argv)
     // READING
     int len = read(client_fd, buffer, sizeof(buffer) - 1);
     buffer[len] = '\0';
-
-    printf("Read %d chars\n", len);
-    printf("===Received request===\n");
-    printf("%s\n", buffer);
-    puts(buffer);
     // Get openssl command
-    makeReq(client_fd,sock_fd);
+    char writeback[1024 * 1024];
+    int size = makeReq(writeback, buffer, client_fd, sock_fd);
+    write(client_fd, writeback, size);
+    shutdown(sock_fd, SHUT_RDWR);
+    close(sock_fd);
     return 0;
 }
