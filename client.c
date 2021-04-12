@@ -20,7 +20,7 @@ int main(int arc, char **argv)
     int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     connect(sock_fd, result->ai_addr, result->ai_addrlen);
 
-    write(sock_fd, "BARBAR", 6);
+    write(sock_fd, "BARBAR", 6); 
     char buffer[1000];
     int len = read(sock_fd, buffer, sizeof(buffer) - 1);
     buffer[len] = '\0';

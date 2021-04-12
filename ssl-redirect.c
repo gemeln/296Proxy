@@ -86,13 +86,16 @@ int main(int argc, char **argv)
             break;
         }
     }
+    system("openssl s_server -key key.pem -cert cert.pem -accept 1358 -www");
     char *success = "HTTP/1.0 200 Connection Established\r\n\r\n";
     write(client_fd, success, strlen(success));
     while (1)
     {
         int bytes = read(client_fd, buffer, 1024 * 1023);
         fprintf(stderr, "read %d bytes from firefox\n", bytes);
-        strcpy(buffer, "GET /\r\n\r\n");
+        buffer[bytes]='\0';
+        puts(buffer);
+        // strcpy(buffer, "GET /\r\n\r\n");
         write(toSSL[1], buffer, bytes);
         while (1)
         {
