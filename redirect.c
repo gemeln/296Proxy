@@ -9,6 +9,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <ctype.h>
+
+
+char* block_arr[100];
+int block_list_size = 0;
 int parseReq(char *req)
 {
     char *hostBegin = strstr(req, "Host: ") + strlen("Host: ");
@@ -27,6 +31,20 @@ int parseReq(char *req)
     hostname[hostlen] = '\0';
     printf("Parsed hostname: %s\\\n", hostname);
 
+    int is_blocked = 0;
+    for (int i = 0; i < block_list_size; i++) {
+        if (strncmp(block_arr[i], hostname, strlen(block_arr[i])) == 0) {
+            // website is blocked
+            is_blocked = 1;
+            break;
+        }
+    }
+
+    if (is_blocked) {
+        printf("===WEBSITE BLOCKED===\n");
+        return -1;
+
+    }
     struct hostent *server;
     struct sockaddr_in serv_addr;
     int sockfd;
@@ -86,7 +104,7 @@ response_t *sendReq(int sockfd, char *req, size_t reqlen)
 
     if (received == total)
         perror("ERROR storing complete response from socket");
-    printf("read %d form server\n", received);
+    printf("read %d from server\n", received);
     response_t *ret = malloc(sizeof(response_t));
     ret->data = malloc(received);
     ret->datasize = received;
@@ -94,10 +112,26 @@ response_t *sendReq(int sockfd, char *req, size_t reqlen)
     return ret;
 }
 
-int main(int argc, int **argv)
+int main(int argc, char **argv)
 {
     // sendReq(NULL);
     // return 0;
+    FILE* block_file = fopen("blocked_list.txt", "r");
+    char* block_line = NULL;
+    size_t link_len = 0;
+    ssize_t bytes_read;
+    if (block_file != NULL) {
+        while ((bytes_read = getline(&block_line, &link_len, block_file)) != -1) {
+
+            block_line[strlen(block_line)-1] = '\0';
+            char* arr_str = malloc(strlen(block_line)+1);
+            strcpy(arr_str, block_line);
+            block_arr[block_list_size] = arr_str;
+            block_list_size++;
+        }
+    }
+
+    fclose(block_file);
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_INET;
@@ -135,7 +169,36 @@ int main(int argc, int **argv)
         printf("Read %d chars\n", len);
         printf("===Received request===\n");
         printf("%s\n", buffer);
+        //kchar* buff_cpy = malloc(256);
+        //kstrcpy(buff_cpy, buffer);
+        //kchar* sep = " ";
+        //kchar* word;
+        //kword = strtok(buff_cpy, sep);
+        //kprintf("Word: %s\n", word);
         int target_fd = parseReq(buffer);
+        if (target_fd == -1) {
+            write(client_fd, "", 0);
+            strcpy(buffer,"GET http://cs241.cs.illinois.edu/ \r\nHost: cs241.cs.illinois.edu\r\n\r\n");
+            char* page = "http://cs241.cs.illinois.edu/";
+            char* host = "cs241.cs.illinois.edu";
+            char* poststr = "";
+            snprintf(buffer, 256, 
+                         "GET %s HTTP/1.0\r\n"  // POST or GET, both tested and works. Both HTTP 1.0 HTTP 1.1 works, but sometimes
+                         "Host: %s\r\n"     // but sometimes HTTP 1.0 works better in localhost type
+                         "Content-type: application/x-www-form-urlencoded\r\n"
+                         "Content-length: %d\r\n\r\n"
+                         "%s\r\n", page, host, (unsigned int)strlen(poststr), poststr);
+            target_fd = parseReq(buffer);
+            response_t *res = sendReq(target_fd, buffer, strlen(buffer));
+            //puts(res->data);
+            //printf("HTTP/1.0 301 Moved Permanently\r\nLocation: %s\r\n", page);
+            dprintf(client_fd, "HTTP/1.0 301 Moved Permanently\r\nLocation: %s\r\n", page);
+            ssize_t rv = send(client_fd, res->data, res->datasize, 0);
+            if (rv == -1)
+                perror("send()");
+            close(client_fd);
+            continue;
+        }
         strcpy(buffer,"GET google.com \r\nHost: google.com\r\n\r\n");
         response_t *res = sendReq(target_fd, buffer, strlen(buffer));
         puts(res->data);
