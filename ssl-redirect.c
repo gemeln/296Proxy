@@ -1,18 +1,36 @@
-#include <sys/socket.h>
-#include <sys/types.h>
+#include <assert.h>
+#include <ctype.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stddef.h>
-#include <assert.h>
-#include <string.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
-#include <ctype.h>
-int main(int argc, char **argv)
-{
-    // sendReq(NULL);
-    // return 0;
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include "utils.c"
+#define BUFSIZE 1024 * 1024
+
+void* HostToCli(void* args) {
+    int* fds = (int*)args;
+    int client_fd = fds[0];
+    int dest_fd = fds[1];
+    ssize_t amountRead, amountWrote;
+    char buffer[BUFSIZE];
+    while (true) {
+        amountRead = read(dest_fd, buffer, BUFSIZE);
+        printf("Read from HOST %ld\n", amountRead);
+
+        amountWrote = write(client_fd, buffer, amountRead);
+        printf("Wrote to FF %ld\n\n", amountWrote);
+    }
+    return NULL;
+}
+
+int main(int argc, char** argv) {
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_INET;
@@ -26,87 +44,47 @@ int main(int argc, char **argv)
     if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
         perror("setsockopt(SO_REUSEADDR) failed");
     // Bind and listen
-    if (bind(sock_fd, result->ai_addr, result->ai_addrlen) != 0)
-    {
+    if (bind(sock_fd, result->ai_addr, result->ai_addrlen) != 0) {
         perror("bind()");
         exit(1);
     }
 
-    if (listen(sock_fd, 10) != 0)
-    {
+    if (listen(sock_fd, 10) != 0) {
         perror("listen()");
         exit(1);
     }
     puts("Waiting to accept");
     int client_fd = accept(sock_fd, NULL, NULL);
     puts("Accepted");
-    char buffer[1024 * 1024];
-    // READING
-    int len = read(client_fd, buffer, sizeof(buffer) - 1);
-    buffer[len] = '\0';
+    // Get request from client, and parse host from CONNECT request
+    ssize_t amountRead, amountWrote;
+    char buffer[BUFSIZE];
+    amountRead = read(client_fd, buffer, BUFSIZE);
+    buffer[amountRead] = 0;
+    puts(buffer);
+    hostinfo inf;
+    parseHost(buffer, &inf);
+    printf("%s %s\n", inf.hostname, inf.port);
+    int dest_fd = connect_to_server(inf.hostname, inf.port);
+    assert(dest_fd >= 0);
+    // Success, return 200
+    char* msg = "200 OK\r\n\r\n";
+    write_all_to_socket(client_fd, msg, strlen(msg));
+    puts("Sent 200 OK to client");
 
-    printf("Read %d chars\n", len);
-    printf("===Received request===\n");
-    printf("%s\n", buffer);
-    // Get hostname
-    char hostName[512];
-    char *hostBegin = strstr(buffer, "Host: ") + strlen("Host: ");
-    int hostLen = strstr(hostBegin, "\r\n") - hostBegin;
-    hostName[hostLen] = '\0';
-    strncpy(hostName, hostBegin, hostLen);
-    printf("%s|\n", hostName);
-    // Get openssl command
-    int toSSL[2];
-    pipe(toSSL);
-    int fromSSL[2];
-    pipe(fromSSL);
-    fflush(stdout);
-    if (fork() == 0)
-    {
-        close(client_fd);
-        close(sock_fd);
-        dup2(fromSSL[1], fileno(stdout));
-        dup2(toSSL[0], fileno(stdin));
-        close(fromSSL[1]);
-        close(fromSSL[0]);
-        close(toSSL[0]);
-        close(toSSL[1]);
-        char openSSL[1024];
-        sprintf(openSSL, "openssl s_client -connect %s\n", hostName);
-        puts(openSSL);
-        system("openssl s_client -connect www.google.com:443");
-        exit(1);
+    pthread_t newThread;
+    int fds[] = {client_fd, dest_fd};
+    pthread_create(&newThread, NULL, HostToCli, fds);
+
+    while (true) {
+        amountRead = read(client_fd, buffer, BUFSIZE);
+        printf("Read from FF %ld\n", amountRead);
+
+        amountWrote = write(dest_fd, buffer, amountRead);
+        printf("Wrote to HOSt %ld\n\n", amountWrote);
     }
-    int total = 1024 * 1024;
-    while (1)
-    {
-        int bytes = read(fromSSL[0], buffer, total);
-        if (strstr(buffer, "Verify return code: 0 (ok)"))
-        {
-            break;
-        }
-    }
-    system("openssl s_server -key key.pem -cert cert.pem -accept 1358 -www");
-    char *success = "HTTP/1.0 200 Connection Established\r\n\r\n";
-    write(client_fd, success, strlen(success));
-    while (1)
-    {
-        int bytes = read(client_fd, buffer, 1024 * 1023);
-        fprintf(stderr, "read %d bytes from firefox\n", bytes);
-        buffer[bytes]='\0';
-        puts(buffer);
-        // strcpy(buffer, "GET /\r\n\r\n");
-        write(toSSL[1], buffer, bytes);
-        while (1)
-        {
-            int bytes = read(fromSSL[0], buffer, 1024 * 1023);
-            fprintf(stderr, "read %d bytes from pipe\n", bytes);
-            write(client_fd, buffer, bytes);
-            puts(buffer);
-        }
-    }
-    puts("DONE");
+    pthread_join(newThread, NULL);
+    shutdown(client_fd, SHUT_RDWR);
     close(client_fd);
-    close(sock_fd);
     return 0;
 }
