@@ -12,19 +12,25 @@
 #include <unistd.h>
 
 #include "utils.c"
-#define BUFSIZE 1024 * 1024
+#include "set.h"
+#define BUFSIZE 1024 * 128
 
 char* block_arr[100];
 int block_list_size = 0;
+SimpleSet* blocked_set;
 
 int checkBlocklist(char* hostname) {
     int is_blocked = 0;
-    for (int i = 0; i < block_list_size; i++) {
-        if (strncmp(block_arr[i], hostname, strlen(block_arr[i])) == 0) {
-            // website is blocked
-            return 1;
-        }
-    }
+    if (set_contains(blocked_set, hostname) == SET_TRUE)
+        return 1;
+    else
+        return 0;
+    //for (int i = 0; i < block_list_size; i++) {
+    //    if (strncmp(block_arr[i], host, strlen(block_arr[i])) == 0) {
+    //        // website is blocked
+    //        return 1;
+    //    }
+    //}
 
     return 0;
 
@@ -54,14 +60,17 @@ int main(int argc, char** argv) {
     char* block_line = NULL;
     size_t link_len = 0;
     ssize_t bytes_read;
+    blocked_set = malloc(sizeof(SimpleSet));
+    set_init(blocked_set);
     if (block_file != NULL) {
         while ((bytes_read = getline(&block_line, &link_len, block_file)) != -1) {
 
             block_line[strlen(block_line)-1] = '\0';
-            char* arr_str = malloc(strlen(block_line)+1);
-            strcpy(arr_str, block_line);
-            block_arr[block_list_size] = arr_str;
-            block_list_size++;
+            set_add(blocked_set, block_line);
+            //char* arr_str = malloc(strlen(block_line)+1);
+            //strcpy(arr_str, block_line);
+            //block_arr[block_list_size] = arr_str;
+            //block_list_size++;
         }
     }
 
@@ -136,5 +145,6 @@ int main(int argc, char** argv) {
     pthread_join(newThread, NULL);
     shutdown(client_fd, SHUT_RDWR);
     close(client_fd);
+    set_destroy(blocked_set);
     return 0;
 }
