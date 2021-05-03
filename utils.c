@@ -77,7 +77,6 @@ int connect_to_server(const char* host, const char* port) {
     return serverSocket;
 }
 bool parseHost(char* request, hostinfo* data) {
-    fprintf(stderr, "Parsing host from %s\n", request);
     memset(data, 0, sizeof(hostinfo));
     char* hostStart = strstr(request, "Host: ") + strlen("Host: ");
     char* colon = strstr(hostStart, ":");

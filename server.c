@@ -4,6 +4,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,14 +38,14 @@ void* HostToCli(void* args) {
     char buffer[BUFSIZE];
     while (true) {
         amountRead = read(dest_fd, buffer, BUFSIZE);
-        printf("Read from HOST %ld\n", amountRead);
+        // printf("Read from HOST %ld\n", amountRead);
         if (amountRead == 0) break;
         if (amountRead < 0) {
             if (errno == EINTR) continue;
             break;
         }
         amountWrote = write(client_fd, buffer, amountRead);
-        printf("Wrote to FF %ld\n\n", amountWrote);
+        // printf("Wrote to FF %ld\n\n", amountWrote);
     }
     return NULL;
 }
@@ -65,6 +66,7 @@ void* HandleConnection(void* args) {
     }
 
     buffer[amountRead] = 0;
+    fprintf(stderr, "Read %lu, Parsing host from %s\n", amountRead, buffer);
     hostinfo inf;
     parseHost(buffer, &inf);
     printf("%s %s\n", inf.hostname, inf.port);
@@ -92,14 +94,14 @@ void* HandleConnection(void* args) {
     pthread_detach(newThread);
     while (true) {
         amountRead = read(client_fd, buffer, BUFSIZE);
-        printf("Read from FF %ld\n", amountRead);
+        // printf("Read from FF %ld\n", amountRead);
         if (amountRead == 0) break;
         if (amountRead < 0) {
             if (errno == EINTR) continue;
             break;
         }
         amountWrote = write(dest_fd, buffer, amountRead);
-        printf("Wrote to HOSt %ld\n\n", amountWrote);
+        // printf("Wrote to HOSt %ld\n\n", amountWrote);
     }
     shutdown(client_fd, SHUT_RDWR);
     close(client_fd);
@@ -110,7 +112,7 @@ void* HandleConnection(void* args) {
 
 int main(int argc, char** argv) {
     // Creating blocklist
-
+    signal(SIGPIPE, SIG_IGN);
     FILE* block_file = fopen("blocked_list.txt", "r");
     assert(block_file);
     char* block_line = NULL;
