@@ -5,6 +5,6 @@ server: server.c
 client: client.c
 	gcc client.c -o client
 ssl-redirect: ssl-redirect.c utils.c
-	gcc -pthread ssl-redirect.c -o ssl-redirect
+	gcc -pthread ssl-redirect.c set.c -o ssl-redirect
 clean:
 	rm redirect ssl-redirect
