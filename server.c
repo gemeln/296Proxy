@@ -1,105 +1,134 @@
 #define _GNU_SOURCE
-#include <sys/socket.h>
-#include <sys/types.h>
+#include <assert.h>
+#include <ctype.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stddef.h>
-#include <assert.h>
-#include <string.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
-#include <ctype.h>
+#include <string.h>
+#include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/wait.h>
-int makeReq(char *writeback, char *clientHeader, int client_fd, int sock_fd)
-{
-    char buffer[1024 * 1024];
-    int toSSL[2];
-    pipe(toSSL);
-    int fromSSL[2];
-    pipe(fromSSL);
-    fflush(stdout);
-    pid_t child = fork();
-    if (child == 0)
-    {
-        // close(client_fd);
-        // close(sock_fd);
-        dup2(fromSSL[1], fileno(stdout));
-        dup2(toSSL[0], fileno(stdin));
-        close(fromSSL[1]);
-        close(fromSSL[0]);
-        close(toSSL[0]);
-        close(toSSL[1]);
-        // Search for host name
-        char *host = strstr(clientHeader, "Host: ") + strlen("Host: ");
-        char *hostEnd = strstr(host, "\r\n");
-        int length = hostEnd - host;
-        memcpy(buffer, host, length);
-        buffer[length] = 0;
-        char command[1024];
-        sprintf(command, "openssl s_client -connect %s", buffer);
-        system(command);
-        exit(1);
+#include <unistd.h>
+
+#include "utils.c"
+#define BUFSIZE 1024 * 1024
+
+char* block_arr[100];
+int block_list_size = 0;
+
+int checkBlocklist(char* hostname) {
+    int is_blocked = 0;
+    for (int i = 0; i < block_list_size; i++) {
+        if (strncmp(block_arr[i], hostname, strlen(block_arr[i])) == 0) {
+            // website is blocked
+            return 1;
+        }
     }
-    int total = 1024 * 1024;
-    size_t numRead = 0;
-    while (1)
-    {
-        numRead += read(fromSSL[0], buffer + numRead, total);
-        if (strstr(buffer, "Verify return code: 0 (ok)"))
-        {
+
+    return 0;
+}
+void* HostToCli(void* args) {
+    int* fds = (int*)args;
+    int client_fd = fds[0];
+    int dest_fd = fds[1];
+    ssize_t amountRead, amountWrote;
+    char buffer[BUFSIZE];
+    while (true) {
+        amountRead = read(dest_fd, buffer, BUFSIZE);
+        printf("Read from HOST %ld\n", amountRead);
+        if (amountRead == 0) break;
+        if (amountRead < 0) {
+            if (errno == EINTR) continue;
             break;
         }
+        amountWrote = write(client_fd, buffer, amountRead);
+        printf("Wrote to FF %ld\n\n", amountWrote);
     }
-    // SSL OK
-    // Get Request from http rheader
-    char req[1024];
-    char *reqEnd = strstr(clientHeader, "\r\n");
-    int length = reqEnd - clientHeader+2;
-    memcpy(req, clientHeader, length);
-    req[length] = 0;
-    puts(req);
-    numRead = 0;
-    write(toSSL[1], req, strlen(req));
-    char *res_start;
-    char *res_end;
-    while (1)
-    {
-        numRead += read(fromSSL[0], buffer + numRead, total);
-        buffer[numRead] = 0;
-        char *OK = strstr(buffer, "200 OK\r\n");
-        if (OK)
-        {
-            res_start = OK;
-            char *END = strstr(OK, "---\nPost-Handshake New Session");
-            if (END)
-            {
-                res_end = END;
-                break;
-            }
-        }
-        // puts(buffer);
-    }
-    res_start = strstr(res_start, "\r\n\r\n") + 4;
-    assert(res_start);
-    // puts("\n\n\n\nDONE\n");
-    *res_end = 0;
-    length = res_end - res_start;
-    memcpy(writeback, res_start, length);
-    // puts(res_end - 30);
-    waitpid(child, NULL, 0);
-    // puts("ENDED");
-    close(fromSSL[1]);
-    close(fromSSL[0]);
-    close(toSSL[0]);
-    close(toSSL[1]);
-    return length;
+    return NULL;
 }
-int main(int argc, int **argv)
-{
-    // sendReq(NULL);
-    // return 0;
+
+void* HandleConnection(void* args) {
+    int client_fd = *((int*)args);
+    // Get request from client, and parse host from CONNECT request
+    ssize_t amountRead, amountWrote;
+    char buffer[BUFSIZE + 1];
+    amountRead = read(client_fd, buffer, BUFSIZE);
+    if (amountRead <= 0) {
+        char* mesg = "403 Forbidden\r\n\r\n";
+        write_all_to_socket(client_fd, mesg, strlen(mesg));
+        puts("Sent 403 Forbidden to client");
+        shutdown(client_fd, SHUT_RDWR);
+        close(client_fd);
+        return 0;
+    }
+
+    buffer[amountRead] = 0;
+    hostinfo inf;
+    parseHost(buffer, &inf);
+    printf("%s %s\n", inf.hostname, inf.port);
+
+    int is_blocked = checkBlocklist(inf.hostname);
+    if (is_blocked) {
+        char* mesg = "403 Forbidden\r\n\r\n";
+        write_all_to_socket(client_fd, mesg, strlen(mesg));
+        puts("Sent 403 Forbidden to client");
+        shutdown(client_fd, SHUT_RDWR);
+        close(client_fd);
+        return 0;
+    }
+
+    int dest_fd = connect_to_server(inf.hostname, inf.port);
+    assert(dest_fd >= 0);
+    // Success, return 200
+    char* msg = "200 OK\r\n\r\n";
+    write_all_to_socket(client_fd, msg, strlen(msg));
+    puts("Sent 200 OK to client");
+
+    pthread_t newThread;
+    int fds[] = {client_fd, dest_fd};
+    pthread_create(&newThread, NULL, &HostToCli, fds);
+    pthread_detach(newThread);
+    while (true) {
+        amountRead = read(client_fd, buffer, BUFSIZE);
+        printf("Read from FF %ld\n", amountRead);
+        if (amountRead == 0) break;
+        if (amountRead < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        amountWrote = write(dest_fd, buffer, amountRead);
+        printf("Wrote to HOSt %ld\n\n", amountWrote);
+    }
+    shutdown(client_fd, SHUT_RDWR);
+    close(client_fd);
+    shutdown(dest_fd, SHUT_RDWR);
+    close(dest_fd);
+    return NULL;
+}
+
+int main(int argc, char** argv) {
+    // Creating blocklist
+
+    FILE* block_file = fopen("blocked_list.txt", "r");
+    assert(block_file);
+    char* block_line = NULL;
+    size_t link_len = 0;
+    ssize_t bytes_read;
+    if (block_file != NULL) {
+        while ((bytes_read = getline(&block_line, &link_len, block_file)) !=
+               -1) {
+            block_line[strlen(block_line) - 1] = '\0';
+            char* arr_str = malloc(strlen(block_line) + 1);
+            strcpy(arr_str, block_line);
+            block_arr[block_list_size] = arr_str;
+            block_list_size++;
+        }
+    }
+
+    fclose(block_file);
+
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_INET;
@@ -113,29 +142,23 @@ int main(int argc, int **argv)
     if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
         perror("setsockopt(SO_REUSEADDR) failed");
     // Bind and listen
-    if (bind(sock_fd, result->ai_addr, result->ai_addrlen) != 0)
-    {
+    if (bind(sock_fd, result->ai_addr, result->ai_addrlen) != 0) {
         perror("bind()");
         exit(1);
     }
 
-    if (listen(sock_fd, 10) != 0)
-    {
+    if (listen(sock_fd, 10) != 0) {
         perror("listen()");
         exit(1);
     }
-    puts("Waiting to accept");
-    int client_fd = accept(sock_fd, NULL, NULL);
-    puts("Accepted");
-    char buffer[1024 * 1024];
-    // READING
-    int len = read(client_fd, buffer, sizeof(buffer) - 1);
-    buffer[len] = '\0';
-    // Get openssl command
-    char writeback[1024 * 1024];
-    int size = makeReq(writeback, buffer, client_fd, sock_fd);
-    write(client_fd, writeback, size);
-    shutdown(sock_fd, SHUT_RDWR);
-    close(sock_fd);
+    while (true) {
+        puts("Waiting to accept");
+        int client_fd = accept(sock_fd, NULL, NULL);
+        assert(client_fd > 0);
+        puts("Accepted");
+        pthread_t connect_thread;
+        pthread_create(&connect_thread, NULL, HandleConnection, &client_fd);
+        pthread_detach(connect_thread);
+    }
     return 0;
 }

@@ -20,7 +20,7 @@ int block_list_size = 0;
 int checkBlocklist(char* hostname) {
     int is_blocked = 0;
     for (int i = 0; i < block_list_size; i++) {
-        if (strncmp(block_arr[i], host, strlen(block_arr[i])) == 0) {
+        if (strncmp(block_arr[i], hostname, strlen(block_arr[i])) == 0) {
             // website is blocked
             return 1;
         }
@@ -50,6 +50,7 @@ int main(int argc, char** argv) {
     // Creating blocklist
 
     FILE* block_file = fopen("blocked_list.txt", "r");
+    assert(block_file);
     char* block_line = NULL;
     size_t link_len = 0;
     ssize_t bytes_read;
@@ -107,7 +108,7 @@ int main(int argc, char** argv) {
     int is_blocked = checkBlocklist(inf.hostname);
     if (is_blocked) {
         char* mesg = "403 Forbidden\r\n\r\n";
-        write_all_to_socket(client_fd, msg, strlen(mesg));
+        write_all_to_socket(client_fd, mesg, strlen(mesg));
         puts("Sent 403 Forbidden to client");
         shutdown(client_fd, SHUT_RDWR);
         close(client_fd);
@@ -123,7 +124,7 @@ int main(int argc, char** argv) {
 
     pthread_t newThread;
     int fds[] = {client_fd, dest_fd};
-    pthread_create(&newThread, NULL, HostToCli, fds);
+    pthread_create(&newThread, NULL, &HostToCli, fds);
 
     while (true) {
         amountRead = read(client_fd, buffer, BUFSIZE);

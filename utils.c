@@ -17,7 +17,7 @@ ssize_t read_all_from_socket(int socket, char* buffer, size_t count) {
     size_t amountRead = 0;
     while (amountRead < count) {
         int bytesRead = read(socket, buffer + amountRead, count - amountRead);
-        printf("Read partial %d bytes\n",bytesRead);
+        printf("Read partial %d bytes\n", bytesRead);
         if (bytesRead < 0) {
             if (errno == EINTR) {
                 continue;
@@ -77,6 +77,7 @@ int connect_to_server(const char* host, const char* port) {
     return serverSocket;
 }
 bool parseHost(char* request, hostinfo* data) {
+    fprintf(stderr, "Parsing host from %s\n", request);
     memset(data, 0, sizeof(hostinfo));
     char* hostStart = strstr(request, "Host: ") + strlen("Host: ");
     char* colon = strstr(hostStart, ":");
