@@ -36,7 +36,8 @@ if [[ -z "$IFACE" ]]; then
    fi
 fi
 
-NS="ns1"
+PID="$2"
+NS="ps1"
 VETH="veth1"
 VPEER="vpeer1"
 VETH_ADDR="10.200.1.1"
