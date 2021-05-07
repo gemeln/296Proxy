@@ -59,6 +59,7 @@ int startContainer(void* args) {
     sprintf(busyNew, "./busybox%d", argStruct->id);
     sprintf(busyOld, "./busybox%d/.old", argStruct->id);
     pivot_root(busyNew, busyOld);
+    printf("New child pid: %d\n",getpid());
     mount("tmpfs", "/dev", "tmpfs", MS_NOSUID | MS_STRICTATIME, NULL);
     mount("proc", "/proc", "proc", 0, NULL);
     umount2("/.old", MNT_DETACH);
@@ -75,11 +76,11 @@ int startContainer(void* args) {
     system("adduser -D newuser");
     system("adduser -D sudouser");
     system("echo ' sudouser ALL=(ALL)   ALL' >> /etc/sudoers");
-    // puts("List of users: ");
-    // system("cut -d: -f1 /etc/passwd");
+    puts("List of users: ");
+    system("cut -d: -f1 /etc/passwd");
     // printf("PID: %ld\n", (long)getpid());
     // system("ifconfig");
-    // system("echo \"nameserver 8.8.8.8\" >> /etc/resolv.conf");
+    system("echo \"nameserver 8.8.8.8\" >> /etc/resolv.conf");
     system(argStruct->toRun);
 
     system("deluser newuser");
