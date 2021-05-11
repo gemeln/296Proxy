@@ -13,22 +13,20 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "set.h"
 #include "utils.c"
 #define BUFSIZE 1024 * 1024
 
 char* block_arr[100];
 int block_list_size = 0;
+SimpleSet* blocked_set;
 
 int checkBlocklist(char* hostname) {
     int is_blocked = 0;
-    for (int i = 0; i < block_list_size; i++) {
-        if (strncmp(block_arr[i], hostname, strlen(block_arr[i])) == 0) {
-            // website is blocked
-            return 1;
-        }
-    }
-
-    return 0;
+    if (set_contains(blocked_set, hostname) == SET_TRUE)
+        return 1;
+    else
+        return 0;
 }
 void* HostToCli(void* args) {
     int* fds = (int*)args;
@@ -111,21 +109,24 @@ void* HandleConnection(void* args) {
 }
 
 int main(int argc, char** argv) {
-    // Creating blocklist
     signal(SIGPIPE, SIG_IGN);
+    // Creating blocklist
     FILE* block_file = fopen("blocked_list.txt", "r");
     assert(block_file);
     char* block_line = NULL;
     size_t link_len = 0;
     ssize_t bytes_read;
+    blocked_set = malloc(sizeof(SimpleSet));
+    set_init(blocked_set);
     if (block_file != NULL) {
         while ((bytes_read = getline(&block_line, &link_len, block_file)) !=
                -1) {
             block_line[strlen(block_line) - 1] = '\0';
-            char* arr_str = malloc(strlen(block_line) + 1);
-            strcpy(arr_str, block_line);
-            block_arr[block_list_size] = arr_str;
-            block_list_size++;
+            set_add(blocked_set, block_line);
+            // char* arr_str = malloc(strlen(block_line)+1);
+            // strcpy(arr_str, block_line);
+            // block_arr[block_list_size] = arr_str;
+            // block_list_size++;
         }
     }
 
